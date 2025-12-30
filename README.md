@@ -1,4 +1,4 @@
-# OpenNHP Agent JavaScript SDK 
+# OpenNHP JavaScript Agent
 
 The Javascript version of NHP-Agent and its usage demonstration.
 
