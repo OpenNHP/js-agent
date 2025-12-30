@@ -10,7 +10,7 @@ This demo showcases the OpenNHP authentication flow and connection status visual
 
 ### Deployment
 
-This project is deployed via GitHub Pages. Any push to the `main` branch will automatically deploy to [jsdemo.opennhp.org](https://jsdemo.opennhp.org).
+This project is deployed via GitHub Pages. Any push to the `main` branch will automatically deploy to [js-agent.opennhp.org](https://js-agent.opennhp.org).
 
 ## Project Structure
 
