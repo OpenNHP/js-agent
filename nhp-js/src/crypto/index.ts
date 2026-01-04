@@ -58,7 +58,19 @@ export {
 } from './sm2.js';
 export type { SM2KeyPairRaw, SM2KeyPairBase64 } from './sm2.js';
 
-export { sm3, hmacSM3, SM3Hasher, newSM3Hash } from './sm3.js';
+export {
+  SM3_HASH_SIZE,
+  sm3,
+  hmacSM3,
+  hmacSM3_2,
+  SM3Hasher,
+  newSM3Hash,
+  keyGenSM3_1,
+  keyGenSM3_2,
+  mixKeySM3,
+  mixHashSM3,
+  isSM3Available,
+} from './sm3.js';
 
 export {
   SM4_KEY_SIZE,

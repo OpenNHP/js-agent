@@ -4,11 +4,9 @@
  *
  * SM4 is a 128-bit block cipher with 128-bit key.
  * For NHP, it's used in GCM mode for authenticated encryption.
- *
- * This is a placeholder implementation that throws an error.
- * To use GM/SM cryptography, install a GM crypto library:
- *   npm install sm-crypto
  */
+
+import { sm4 } from 'sm-crypto-v2';
 
 /** SM4 key size in bytes */
 export const SM4_KEY_SIZE = 16;
@@ -42,7 +40,24 @@ export function sm4GcmSeal(
   if (nonce.length !== SM4_GCM_NONCE_SIZE) {
     throw new Error(`SM4-GCM nonce must be ${SM4_GCM_NONCE_SIZE} bytes`);
   }
-  throw new Error('SM4-GCM not implemented. Install sm-crypto package for GM support.');
+
+  const result = sm4.encrypt(plaintext, key, {
+    mode: 'gcm',
+    iv: nonce,
+    associatedData: additionalData,
+    output: 'array',
+    outputTag: true,
+  }) as { output: Uint8Array; tag: Uint8Array };
+
+  // Concatenate ciphertext and tag
+  const ciphertext = result.output;
+  const tag = result.tag!;
+
+  const output = new Uint8Array(ciphertext.length + tag.length);
+  output.set(ciphertext, 0);
+  output.set(tag, ciphertext.length);
+
+  return output;
 }
 
 /**
@@ -66,12 +81,28 @@ export function sm4GcmOpen(
   if (nonce.length !== SM4_GCM_NONCE_SIZE) {
     throw new Error(`SM4-GCM nonce must be ${SM4_GCM_NONCE_SIZE} bytes`);
   }
-  throw new Error('SM4-GCM not implemented. Install sm-crypto package for GM support.');
+  if (ciphertextWithTag.length < SM4_GCM_TAG_SIZE) {
+    throw new Error('Ciphertext too short');
+  }
+
+  // Split ciphertext and tag
+  const ciphertext = ciphertextWithTag.slice(0, -SM4_GCM_TAG_SIZE);
+  const tag = ciphertextWithTag.slice(-SM4_GCM_TAG_SIZE);
+
+  const plaintext = sm4.decrypt(ciphertext, key, {
+    mode: 'gcm',
+    iv: nonce,
+    associatedData: additionalData,
+    tag: tag,
+    output: 'array',
+  });
+
+  return plaintext;
 }
 
 /**
  * Check if SM4 is available
  */
 export function isSM4Available(): boolean {
-  return false; // Will return true when sm-crypto is implemented
+  return true;
 }
