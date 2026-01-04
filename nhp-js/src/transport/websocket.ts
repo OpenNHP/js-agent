@@ -7,6 +7,7 @@ import type {
   ConnectionState,
   WebSocketTransportConfig,
   TransportMessage,
+  TransportEvent,
   EventHandler,
 } from '../types.js';
 
@@ -16,9 +17,6 @@ const DEFAULT_CONFIG = {
   maxReconnectAttempts: 5,
   reconnectDelay: 1000,
 };
-
-/** WebSocket transport events */
-type TransportEvent = 'open' | 'close' | 'error' | 'message';
 
 /**
  * WebSocket transport for NHP communication in browser environments

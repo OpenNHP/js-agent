@@ -9,6 +9,7 @@
 import type {
   ConnectionState,
   TransportMessage,
+  TransportEvent,
   EventHandler,
 } from '../types.js';
 
@@ -35,8 +36,8 @@ const DEFAULT_CONFIG = {
   channelLabel: 'nhp',
 };
 
-/** WebRTC transport events */
-type TransportEvent = 'open' | 'close' | 'error' | 'message' | 'offer';
+/** WebRTC-specific transport events (extends base TransportEvent with 'offer') */
+export type WebRTCTransportEvent = TransportEvent | 'offer';
 
 /**
  * WebRTC transport for NHP communication in browser environments
@@ -46,7 +47,7 @@ export class WebRTCTransport {
   private dc: RTCDataChannel | null = null;
   private config: WebRTCTransportConfig & typeof DEFAULT_CONFIG;
   private state: ConnectionState = 'disconnected';
-  private eventHandlers: Map<TransportEvent, Set<EventHandler>> = new Map();
+  private eventHandlers: Map<WebRTCTransportEvent, Set<EventHandler>> = new Map();
 
   constructor(config: WebRTCTransportConfig = {}) {
     this.config = {
@@ -230,7 +231,7 @@ export class WebRTCTransport {
   /**
    * Register an event handler
    */
-  on(event: TransportEvent, handler: EventHandler): void {
+  on(event: WebRTCTransportEvent, handler: EventHandler): void {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, new Set());
     }
@@ -240,7 +241,7 @@ export class WebRTCTransport {
   /**
    * Remove an event handler
    */
-  off(event: TransportEvent, handler: EventHandler): void {
+  off(event: WebRTCTransportEvent, handler: EventHandler): void {
     const handlers = this.eventHandlers.get(event);
     if (handlers) {
       handlers.delete(handler);
@@ -404,7 +405,7 @@ export class WebRTCTransport {
     return await response.json();
   }
 
-  private emit(event: TransportEvent, data: unknown): void {
+  private emit(event: WebRTCTransportEvent, data: unknown): void {
     const handlers = this.eventHandlers.get(event);
     if (handlers) {
       handlers.forEach((handler) => handler(data));

@@ -128,6 +128,9 @@ export interface ParsedPacket {
 /** Connection state for transport */
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
+/** Transport events */
+export type TransportEvent = 'open' | 'close' | 'error' | 'message';
+
 /** WebSocket transport configuration */
 export interface WebSocketTransportConfig {
   /** WebSocket URL */
