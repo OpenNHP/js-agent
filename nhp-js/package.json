@@ -40,7 +40,8 @@
   "dependencies": {
     "@noble/ciphers": "^2.1.1",
     "@noble/curves": "^2.0.1",
-    "@noble/hashes": "^1.7.2"
+    "@noble/hashes": "^1.7.2",
+    "sm-crypto-v2": "^1.15.1"
   },
   "devDependencies": {
     "@types/node": "^22.15.21",

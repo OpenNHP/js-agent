@@ -19,6 +19,7 @@ import type {
   TransportType,
 } from './types.js';
 import { generateX25519KeyPairBase64, derivePublicKeyFromBase64 } from './crypto/ecdh.js';
+import { generateSM2KeyPairBase64, deriveSM2PublicKeyFromBase64 } from './crypto/sm2.js';
 import { randomBytes, bytesToHex } from './crypto/utils.js';
 import { buildNHPPacket, parseNHPPacket, clearServerCookie } from './protocol/packet.js';
 import { NHP_PACKET_TYPES } from './protocol/constants.js';
@@ -97,10 +98,6 @@ export class NHPAgent {
       ...DEFAULT_CONFIG,
       ...config,
     };
-
-    if (this.config.cipherScheme === 'gmsm') {
-      throw new Error('GM SM2/SM3/SM4 cipher scheme is not yet supported');
-    }
   }
 
   /**
@@ -112,22 +109,28 @@ export class NHPAgent {
       return;
     }
 
+    const isGMSM = this.config.cipherScheme === 'gmsm';
+
     if (this.config.privateKey) {
       // Derive public key from provided private key
-      const publicKey = derivePublicKeyFromBase64(this.config.privateKey);
+      const publicKey = isGMSM
+        ? deriveSM2PublicKeyFromBase64(this.config.privateKey)
+        : derivePublicKeyFromBase64(this.config.privateKey);
       this.keyPair = {
         privateKey: this.config.privateKey,
         publicKey,
       };
-      this.log('info', 'Using provided private key');
+      this.log('info', `Using provided private key (${isGMSM ? 'SM2' : 'X25519'})`);
     } else {
-      // Generate new key pair
-      this.keyPair = generateX25519KeyPairBase64();
-      this.log('info', 'Generated new X25519 key pair');
+      // Generate new key pair based on cipher scheme
+      this.keyPair = isGMSM
+        ? generateSM2KeyPairBase64()
+        : generateX25519KeyPairBase64();
+      this.log('info', `Generated new ${isGMSM ? 'SM2' : 'X25519'} key pair`);
     }
 
     this.initialized = true;
-    this.log('info', 'NHPAgent initialized');
+    this.log('info', `NHPAgent initialized with ${isGMSM ? 'GMSM' : 'CURVE25519'} cipher scheme`);
   }
 
   /**
@@ -342,7 +345,8 @@ export class NHPAgent {
       this.keyPair.publicKey,
       server.publicKey,
       knockMessage,
-      true // compress
+      true, // compress
+      this.config.cipherScheme
     );
 
     this.log('debug', `${packetType === NHP_PACKET_TYPES.KNK ? 'KNK' : 'RNK'} packet built: ${packet.length} bytes`);

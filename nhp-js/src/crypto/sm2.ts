@@ -7,18 +7,15 @@
  *   - Private key: 32 bytes
  *   - Public key: 64 bytes (uncompressed X, Y coordinates)
  *   - Shared secret: 32 bytes
- *
- * This is a placeholder implementation that throws an error.
- * To use GM/SM cryptography, install a GM crypto library:
- *   npm install sm-crypto
  */
 
-import { bytesToBase64, base64ToBytes } from './utils.js';
+import { sm2 } from 'sm-crypto-v2';
+import { bytesToBase64, base64ToBytes, bytesToHex, hexToBytes } from './utils.js';
 
 /** SM2 private key size in bytes */
 export const SM2_PRIVATE_KEY_SIZE = 32;
 
-/** SM2 public key size in bytes (uncompressed) */
+/** SM2 public key size in bytes (uncompressed, without 04 prefix) */
 export const SM2_PUBLIC_KEY_SIZE = 64;
 
 /** SM2 key pair as raw bytes */
@@ -37,7 +34,20 @@ export interface SM2KeyPairBase64 {
  * Generate a new SM2 key pair
  */
 export function generateSM2KeyPair(): SM2KeyPairRaw {
-  throw new Error('SM2 not implemented. Install sm-crypto package for GM support.');
+  const keyPair = sm2.generateKeyPairHex();
+
+  // Private key is 64 hex chars = 32 bytes
+  const privateKey = hexToBytes(keyPair.privateKey);
+
+  // Public key from sm-crypto-v2 is 128 hex chars (04 prefix + 64 bytes)
+  // Strip the 04 prefix if present
+  let pubKeyHex = keyPair.publicKey;
+  if (pubKeyHex.startsWith('04')) {
+    pubKeyHex = pubKeyHex.slice(2);
+  }
+  const publicKey = hexToBytes(pubKeyHex);
+
+  return { privateKey, publicKey };
 }
 
 /**
@@ -58,7 +68,16 @@ export function deriveSM2PublicKey(privateKey: Uint8Array): Uint8Array {
   if (privateKey.length !== SM2_PRIVATE_KEY_SIZE) {
     throw new Error(`SM2 private key must be ${SM2_PRIVATE_KEY_SIZE} bytes`);
   }
-  throw new Error('SM2 not implemented. Install sm-crypto package for GM support.');
+
+  const privateKeyHex = bytesToHex(privateKey);
+  let publicKeyHex = sm2.getPublicKeyFromPrivateKey(privateKeyHex);
+
+  // Strip the 04 prefix if present
+  if (publicKeyHex.startsWith('04')) {
+    publicKeyHex = publicKeyHex.slice(2);
+  }
+
+  return hexToBytes(publicKeyHex);
 }
 
 /**
@@ -73,7 +92,7 @@ export function deriveSM2PublicKeyFromBase64(privateKeyBase64: string): string {
 /**
  * Perform SM2 ECDH key exchange
  * @param privateKey - 32-byte private key
- * @param publicKey - 64-byte public key (uncompressed)
+ * @param publicKey - 64-byte public key (uncompressed, without 04 prefix)
  * @returns 32-byte shared secret
  */
 export function sm2ECDH(privateKey: Uint8Array, publicKey: Uint8Array): Uint8Array {
@@ -83,12 +102,22 @@ export function sm2ECDH(privateKey: Uint8Array, publicKey: Uint8Array): Uint8Arr
   if (publicKey.length !== SM2_PUBLIC_KEY_SIZE) {
     throw new Error(`SM2 public key must be ${SM2_PUBLIC_KEY_SIZE} bytes`);
   }
-  throw new Error('SM2 ECDH not implemented. Install sm-crypto package for GM support.');
+
+  const privateKeyHex = bytesToHex(privateKey);
+  // Add 04 prefix for uncompressed point format
+  const publicKeyHex = '04' + bytesToHex(publicKey);
+
+  // sm2.ecdh returns the shared secret as Uint8Array
+  const sharedSecret = sm2.ecdh(privateKeyHex, publicKeyHex);
+
+  // Return only the X coordinate (first 32 bytes) as the shared secret
+  // This matches the Go implementation
+  return sharedSecret.slice(0, 32);
 }
 
 /**
  * Check if SM2 is available
  */
 export function isSM2Available(): boolean {
-  return false; // Will return true when sm-crypto is implemented
+  return true;
 }

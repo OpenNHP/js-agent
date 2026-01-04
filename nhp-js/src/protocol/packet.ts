@@ -1,14 +1,15 @@
 /**
  * NHP Packet Building and Parsing
  * Implements the core NHP protocol packet operations
- * Uses Blake2s + AES-256-GCM to match Go NHP implementation
+ * Supports both CURVE25519 (Blake2s + AES-256-GCM) and GMSM (SM3 + SM4-GCM) schemes
  */
 
-import type { PacketType, ParsedPacket } from '../types.js';
-import { NHPHeader } from './header.js';
+import type { PacketType, ParsedPacket, CipherScheme } from '../types.js';
+import { NHPHeader, NHPHeaderEx, type INHPHeader } from './header.js';
 import {
   PACKET_BUFFER_SIZE,
   HEADER_SIZE,
+  HEADER_EX_SIZE,
   INITIAL_CHAIN_KEY_STRING,
   INITIAL_HASH_STRING,
   NHP_PACKET_TYPES,
@@ -30,6 +31,19 @@ import {
   mixKey,
 } from '../crypto/noise.js';
 import {
+  generateSM2KeyPair,
+  sm2ECDH,
+  SM2_PUBLIC_KEY_SIZE,
+} from '../crypto/sm2.js';
+import {
+  sm3,
+  hmacSM3,
+  keyGenSM3_2,
+  mixKeySM3,
+  mixHashSM3,
+} from '../crypto/sm3.js';
+import { sm4GcmSeal, sm4GcmOpen } from '../crypto/sm4.js';
+import {
   base64ToBytes,
   stringToBytes,
   bytesToString,
@@ -37,6 +51,7 @@ import {
   getUnixNano,
   zlibCompress,
   zlibDecompress,
+  concatBytes,
 } from '../crypto/utils.js';
 
 // Global state for packet management
@@ -53,6 +68,7 @@ const lastRemoteSendTimeMap = new Map<string, bigint>();
  * @param remotePublicKey - Base64-encoded remote public key
  * @param message - Message payload to encrypt
  * @param compress - Whether to compress the payload
+ * @param cipherScheme - Cipher scheme to use (default: auto-detect from key size)
  * @returns Encrypted packet bytes
  */
 export async function buildNHPPacket(
@@ -61,11 +77,15 @@ export async function buildNHPPacket(
   publicKey: string,
   remotePublicKey: string,
   message: string,
-  compress: boolean
+  compress: boolean,
+  cipherScheme?: CipherScheme
 ): Promise<Uint8Array> {
-  // Only support X25519 for now (44 char base64 = 32 bytes)
-  if (privateKey.length !== 44) {
-    throw new Error('GM SM2 scheme is not supported yet');
+  // Auto-detect cipher scheme from key size if not specified
+  // X25519: 32 bytes = 44 base64 chars, SM2: 64 bytes = 88 base64 chars (public key)
+  const detectedScheme = cipherScheme ?? (publicKey.length > 50 ? 'gmsm' : 'curve25519');
+
+  if (detectedScheme === 'gmsm') {
+    return buildNHPPacketGMSM(type, privateKey, publicKey, remotePublicKey, message, compress);
   }
 
   const packet = new Uint8Array(PACKET_BUFFER_SIZE);
@@ -187,15 +207,21 @@ export async function parseNHPPacket(
     throw new Error('Packet size is too small');
   }
 
+  // Check if this is an extended (GMSM) packet by checking size or flags
+  // Extended packets are at least 304 bytes
+  if (packet.length >= HEADER_EX_SIZE) {
+    // Peek at flags to check if extended
+    const flagByte = packet[10] | (packet[11] << 8);
+    if (flagByte & 0x1) {
+      return parseNHPPacketGMSM(packet, privateKey, publicKey, remotePublicKey);
+    }
+  }
+
   // Create a clean ArrayBuffer copy to avoid SharedArrayBuffer issues
   const packetBuffer = new ArrayBuffer(packet.length);
   new Uint8Array(packetBuffer).set(packet);
   const header = new NHPHeader(packetBuffer);
-  const { extended, compressed } = header.flags;
-
-  if (extended) {
-    throw new Error('GM SM2 scheme is not supported yet');
-  }
+  const { compressed } = header.flags;
 
   const { type, size } = header.typeAndPayloadSize;
 
@@ -327,4 +353,235 @@ export function clearServerCookie(remotePublicKey: string): void {
  */
 export function resetGlobalCounter(): void {
   globalCounter = 0n;
+}
+
+/**
+ * Build an NHP packet using GMSM cipher scheme (SM2/SM3/SM4)
+ */
+async function buildNHPPacketGMSM(
+  type: number,
+  privateKey: string,
+  publicKey: string,
+  remotePublicKey: string,
+  message: string,
+  compress: boolean
+): Promise<Uint8Array> {
+  const packet = new Uint8Array(PACKET_BUFFER_SIZE);
+  const header = new NHPHeaderEx(packet.buffer);
+
+  // Convert keys from base64 to raw bytes
+  const localPrivKeyBytes = base64ToBytes(privateKey);
+  const localPubKeyBytes = base64ToBytes(publicKey);
+  const remotePubKeyBytes = base64ToBytes(remotePublicKey);
+  const msgBytes = stringToBytes(message);
+
+  // Set header fields
+  header.version = { major: PROTOCOL_VERSION.MAJOR, minor: PROTOCOL_VERSION.MINOR };
+  header.flags = { extended: true, compressed: compress };
+  globalCounter++;
+  header.counter = globalCounter;
+  const nonce = header.nonce;
+
+  // Initialize chain key and hash using SM3
+  let chainKey = sm3(stringToBytes(INITIAL_HASH_STRING));
+  let chainHash = sm3(stringToBytes(INITIAL_HASH_STRING));
+  chainKey = mixKeySM3(chainHash, stringToBytes(INITIAL_CHAIN_KEY_STRING))[0];
+
+  // HMAC data accumulator
+  let hmacData = concatBytes(stringToBytes(INITIAL_HASH_STRING), remotePubKeyBytes);
+
+  // Mix in remote public key
+  chainHash = mixHashSM3(chainHash, remotePubKeyBytes);
+
+  // Generate ephemeral SM2 key pair and perform ECDH
+  const ephemeralKeys = generateSM2KeyPair();
+  const ephemeralPublicKeyBytes = ephemeralKeys.publicKey;
+  header.ephemeral = ephemeralPublicKeyBytes;
+
+  chainHash = mixHashSM3(chainHash, ephemeralPublicKeyBytes);
+  chainKey = mixKeySM3(chainKey, ephemeralPublicKeyBytes)[0];
+
+  // SM2 ECDH: ephemeral private * remote public
+  const ess = sm2ECDH(ephemeralKeys.privateKey, remotePubKeyBytes);
+
+  // Encrypt local public key using SM4-GCM
+  const derivedKeys0 = keyGenSM3_2(chainKey, ess);
+  chainKey = derivedKeys0[0];
+
+  const keyStatic = sm4GcmSeal(derivedKeys0[1].slice(0, 16), nonce, localPubKeyBytes, chainHash);
+  header.static = keyStatic;
+
+  chainHash = mixHashSM3(chainHash, keyStatic);
+
+  // SM2 ECDH: local private * remote public
+  const ss = sm2ECDH(localPrivKeyBytes, remotePubKeyBytes);
+
+  // Encrypt timestamp
+  const derivedKeys1 = keyGenSM3_2(chainKey, ss);
+  chainKey = derivedKeys1[0];
+
+  const tsBuf = new ArrayBuffer(8);
+  const tsView = new DataView(tsBuf);
+  const timestamp = getUnixNano();
+  tsView.setBigUint64(0, timestamp);
+  const ts = new Uint8Array(tsBuf);
+  lastSendTimeMap.set(remotePublicKey, timestamp);
+
+  const tsStatic = sm4GcmSeal(derivedKeys1[1].slice(0, 16), nonce, ts, chainHash);
+  header.timestamp = tsStatic;
+
+  // Encrypt message payload
+  const derivedKeys2 = keyGenSM3_2(chainKey, tsStatic);
+  chainKey = derivedKeys2[0];
+  chainHash = mixHashSM3(chainHash, tsStatic);
+
+  let payload = msgBytes;
+  if (compress) {
+    payload = await zlibCompress(msgBytes);
+  }
+
+  const msgStatic = sm4GcmSeal(derivedKeys2[1].slice(0, 16), nonce, payload, chainHash);
+  packet.set(msgStatic, header.size);
+
+  const payloadSize = payload.byteLength + FIELD_SIZES.AEAD_TAG;
+  header.typeAndPayloadSize = { type, size: payloadSize };
+
+  // Compute HMAC using SM3
+  if (type === NHP_PACKET_TYPES.RNK) {
+    const cookie = serverCookieMap.get(remotePublicKey);
+    if (cookie) {
+      hmacData = concatBytes(hmacData, cookie);
+    }
+  }
+  hmacData = concatBytes(hmacData, packet.subarray(0, header.size - FIELD_SIZES.HMAC));
+  header.hmac = hmacSM3(chainHash, hmacData);
+
+  return packet.subarray(0, header.size + payloadSize);
+}
+
+/**
+ * Parse an NHP packet using GMSM cipher scheme (SM2/SM3/SM4)
+ */
+async function parseNHPPacketGMSM(
+  packet: Uint8Array,
+  privateKey: string,
+  publicKey: string,
+  remotePublicKey: string
+): Promise<ParsedPacket> {
+  // Create a clean ArrayBuffer copy
+  const packetBuffer = new ArrayBuffer(packet.length);
+  new Uint8Array(packetBuffer).set(packet);
+  const header = new NHPHeaderEx(packetBuffer);
+  const { compressed } = header.flags;
+
+  const { type, size } = header.typeAndPayloadSize;
+
+  if (type !== NHP_PACKET_TYPES.ACK && type !== NHP_PACKET_TYPES.COK) {
+    throw new Error('Not an ACK or COK packet');
+  }
+
+  if (packet.length !== header.size + size) {
+    throw new Error('Wrong packet size');
+  }
+
+  const recvTime = getUnixNano();
+
+  // Convert keys from base64 to raw bytes
+  const localPrivKeyBytes = base64ToBytes(privateKey);
+  const localPubKeyBytes = base64ToBytes(publicKey);
+  const remotePubKeyBytes = base64ToBytes(remotePublicKey);
+
+  // Verify HMAC using SM3
+  const hmacData = concatBytes(
+    stringToBytes(INITIAL_HASH_STRING),
+    localPubKeyBytes,
+    packet.subarray(0, header.size - FIELD_SIZES.HMAC)
+  );
+  const chainHashInit = sm3(stringToBytes(INITIAL_HASH_STRING));
+  const checkSum = hmacSM3(chainHashInit, hmacData);
+
+  if (!equalBytes(checkSum, header.hmac)) {
+    throw new Error('HMAC check failed');
+  }
+
+  const ephemeralPublicKeyBytes = header.ephemeral;
+  const nonce = header.nonce;
+  const keyStatic = header.static;
+  const tsStatic = header.timestamp;
+  const msgStatic = packet.subarray(header.size);
+
+  // Initialize chain key and hash using SM3
+  let chainKey = sm3(stringToBytes(INITIAL_HASH_STRING));
+  let chainHash = sm3(stringToBytes(INITIAL_HASH_STRING));
+  chainKey = mixKeySM3(chainHash, stringToBytes(INITIAL_CHAIN_KEY_STRING))[0];
+
+  chainHash = mixHashSM3(chainHash, localPubKeyBytes);
+  chainHash = mixHashSM3(chainHash, ephemeralPublicKeyBytes);
+  chainKey = mixKeySM3(chainKey, ephemeralPublicKeyBytes)[0];
+
+  // SM2 ECDH: local private * ephemeral public
+  const ess = sm2ECDH(localPrivKeyBytes, ephemeralPublicKeyBytes);
+
+  // Decrypt remote public key
+  const derivedKeys0 = keyGenSM3_2(chainKey, ess);
+  chainKey = derivedKeys0[0];
+  const decryptedPubKeyBytes = sm4GcmOpen(derivedKeys0[1].slice(0, 16), nonce, keyStatic, chainHash);
+
+  if (!equalBytes(remotePubKeyBytes, decryptedPubKeyBytes)) {
+    throw new Error('Remote public key check failed');
+  }
+
+  chainHash = mixHashSM3(chainHash, keyStatic);
+
+  // SM2 ECDH: local private * remote public
+  const ss = sm2ECDH(localPrivKeyBytes, remotePubKeyBytes);
+
+  // Decrypt timestamp
+  const derivedKeys1 = keyGenSM3_2(chainKey, ss);
+  chainKey = derivedKeys1[0];
+
+  const decryptedTs = sm4GcmOpen(derivedKeys1[1].slice(0, 16), nonce, tsStatic, chainHash);
+  const tsBuf = new ArrayBuffer(decryptedTs.length);
+  new Uint8Array(tsBuf).set(decryptedTs);
+  const tsView = new DataView(tsBuf);
+  const remoteSendTime = tsView.getBigUint64(0);
+
+  // Anti-replay checks
+  const lastRemoteSendTime = lastRemoteSendTimeMap.get(remotePublicKey);
+  lastRemoteSendTimeMap.set(remotePublicKey, remoteSendTime);
+
+  if (lastRemoteSendTime !== undefined) {
+    if (remoteSendTime < lastRemoteSendTime) {
+      throw new Error('Received replay packet');
+    }
+    if (remoteSendTime < lastRemoteSendTime + FLOOD_PACKET_THRESHOLD_NS) {
+      throw new Error('Received flood packet');
+    }
+  }
+
+  if (remoteSendTime < recvTime - STALE_PACKET_THRESHOLD_NS) {
+    throw new Error('Received stale packet');
+  }
+
+  // Decrypt message
+  const derivedKeys2 = keyGenSM3_2(chainKey, header.timestamp);
+  chainKey = derivedKeys2[0];
+  chainHash = mixHashSM3(chainHash, tsStatic);
+
+  let msg = sm4GcmOpen(derivedKeys2[1].slice(0, 16), nonce, msgStatic, chainHash);
+
+  if (compressed) {
+    msg = await zlibDecompress(msg);
+  }
+
+  // Handle cookie packets
+  if (type === NHP_PACKET_TYPES.COK) {
+    serverCookieMap.set(remotePublicKey, msg);
+  }
+
+  return {
+    type: type as PacketType,
+    message: bytesToString(msg),
+    remotePublicKey,
+  };
 }
