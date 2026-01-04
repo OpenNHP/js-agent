@@ -57,6 +57,7 @@ export type {
   HeaderFlags,
   ParsedPacket,
   ConnectionState,
+  TransportEvent,
   WebSocketTransportConfig,
   TransportMessage,
   AgentKnockMsg,
@@ -83,7 +84,8 @@ export {
   NHP_PACKET_TYPES,
   PROTOCOL_VERSION,
 } from './protocol/index.js';
+export type { INHPHeader, TypeAndPayloadSize } from './protocol/index.js';
 
 // Transport (for advanced usage)
 export { WebSocketTransport, UdpTransport, WebRTCTransport } from './transport/index.js';
-export type { UdpTransportConfig, WebRTCTransportConfig } from './transport/index.js';
+export type { UdpTransportConfig, WebRTCTransportConfig, WebRTCTransportEvent } from './transport/index.js';

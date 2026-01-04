@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenNHP Agent - Browser Example</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 { color: #333; }
+    .form-group {
+      margin-bottom: 15px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: 500;
+    }
+    input, select {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    button {
+      background: #0066cc;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover { background: #0052a3; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    #status {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 4px;
+      background: #f0f0f0;
+    }
+    .success { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+    .info { background: #d1ecf1; color: #0c5460; }
+    pre {
+      background: #f8f8f8;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>OpenNHP Agent - Browser Demo</h1>
+
+    <div class="form-group">
+      <label>Cipher Scheme</label>
+      <select id="cipherScheme">
+        <option value="curve25519">CURVE25519 (X25519 + Blake2s + AES-GCM)</option>
+        <option value="gmsm">GMSM (SM2 + SM3 + SM4-GCM)</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Server Host</label>
+      <input type="text" id="serverHost" value="nhp.example.com">
+    </div>
+
+    <div class="form-group">
+      <label>Server Port</label>
+      <input type="number" id="serverPort" value="62206">
+    </div>
+
+    <div class="form-group">
+      <label>Server Public Key (Base64)</label>
+      <input type="text" id="serverKey" placeholder="Enter server's public key">
+    </div>
+
+    <div class="form-group">
+      <label>User ID</label>
+      <input type="text" id="userId" value="user@example.com">
+    </div>
+
+    <div class="form-group">
+      <label>Resource ID</label>
+      <input type="text" id="resourceId" value="demo-resource">
+    </div>
+
+    <div class="form-group">
+      <label>Service ID</label>
+      <input type="text" id="serviceId" value="demo-service">
+    </div>
+
+    <button id="knockBtn" onclick="performKnock()">Knock on Resource</button>
+
+    <div id="status"></div>
+  </div>
+
+  <script type="module">
+    import { NHPAgent } from '../dist/index.js';
+
+    // Make agent available globally for the onclick handler
+    window.NHPAgent = NHPAgent;
+
+    window.performKnock = async function() {
+      const status = document.getElementById('status');
+      const btn = document.getElementById('knockBtn');
+
+      // Get form values
+      const cipherScheme = document.getElementById('cipherScheme').value;
+      const serverHost = document.getElementById('serverHost').value;
+      const serverPort = parseInt(document.getElementById('serverPort').value);
+      const serverKey = document.getElementById('serverKey').value;
+      const userId = document.getElementById('userId').value;
+      const resourceId = document.getElementById('resourceId').value;
+      const serviceId = document.getElementById('serviceId').value;
+
+      if (!serverKey) {
+        status.className = 'error';
+        status.innerHTML = 'Please enter the server public key';
+        return;
+      }
+
+      btn.disabled = true;
+      status.className = 'info';
+      status.innerHTML = 'Initializing agent...';
+
+      try {
+        // Create and initialize agent
+        const agent = new NHPAgent({
+          cipherScheme,
+          transport: 'webrtc',
+          logLevel: 'debug'
+        });
+
+        await agent.init();
+
+        status.innerHTML = `Agent initialized<br>Public key: <code>${agent.getPublicKey()}</code>`;
+
+        // Set identity
+        agent.setIdentity({
+          userId,
+          deviceId: 'browser-' + Date.now(),
+          organizationId: 'demo'
+        });
+
+        // Add server
+        agent.addServer({
+          publicKey: serverKey,
+          host: serverHost,
+          port: serverPort
+        });
+
+        status.innerHTML += '<br>Sending knock request...';
+
+        // Knock on resource
+        const result = await agent.knockResource({
+          resourceId,
+          serviceId,
+          serverHost,
+          serverPort
+        });
+
+        if (result.success) {
+          status.className = 'success';
+          status.innerHTML = `
+            <strong>Access Granted!</strong><br>
+            Expires: ${new Date(result.expiresAt).toLocaleString()}<br>
+            <pre>${JSON.stringify(result, null, 2)}</pre>
+          `;
+        } else {
+          status.className = 'error';
+          status.innerHTML = `
+            <strong>Access Denied</strong><br>
+            Error: ${result.error}<br>
+            Code: ${result.errorCode}
+          `;
+        }
+
+        await agent.close();
+
+      } catch (error) {
+        status.className = 'error';
+        status.innerHTML = `<strong>Error:</strong> ${error.message}`;
+        console.error(error);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>

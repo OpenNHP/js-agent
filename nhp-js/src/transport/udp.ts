@@ -9,6 +9,7 @@
 import type {
   ConnectionState,
   TransportMessage,
+  TransportEvent,
   EventHandler,
 } from '../types.js';
 
@@ -27,9 +28,6 @@ const DEFAULT_CONFIG = {
   port: 62206,
   timeout: 10000,
 };
-
-/** UDP transport events */
-type TransportEvent = 'open' | 'close' | 'error' | 'message';
 
 /**
  * UDP transport for NHP communication in Node.js environments
