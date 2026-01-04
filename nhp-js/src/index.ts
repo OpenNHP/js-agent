@@ -58,6 +58,9 @@ export type {
   ConnectionState,
   WebSocketTransportConfig,
   TransportMessage,
+  AgentKnockMsg,
+  ServerKnockAckMsg,
+  AgentIdentity,
 } from './types.js';
 
 // Crypto utilities (for advanced usage)
@@ -81,4 +84,5 @@ export {
 } from './protocol/index.js';
 
 // Transport (for advanced usage)
-export { WebSocketTransport } from './transport/index.js';
+export { WebSocketTransport, UdpTransport, WebRTCTransport } from './transport/index.js';
+export type { UdpTransportConfig, WebRTCTransportConfig } from './transport/index.js';

@@ -147,17 +147,17 @@ export class UdpTransport {
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.off('message', messageHandler);
+        this.off('message', messageHandler as EventHandler);
         reject(new Error('UDP request timeout'));
       }, timeoutMs);
 
-      const messageHandler = (msg: TransportMessage) => {
+      const messageHandler = (msg: unknown) => {
         clearTimeout(timer);
-        this.off('message', messageHandler);
-        resolve(msg);
+        this.off('message', messageHandler as EventHandler);
+        resolve(msg as TransportMessage);
       };
 
-      this.on('message', messageHandler);
+      this.on('message', messageHandler as EventHandler);
       this.send(data);
     });
   }
