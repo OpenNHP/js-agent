@@ -143,6 +143,8 @@
                             class="btn-primary w-full py-3 rounded-lg text-white font-semibold" data-i18n="loginBtn">
                         Login
                     </button>
+                    <div id="agentPublicKey" class="mt-2 text-xs text-gray-500 text-center font-mono"></div>
+                    <div id="knockStatus" class="mt-2 text-xs text-gray-400 text-center"></div>
                 </form>
 
                 <!-- Divider -->
@@ -334,13 +336,18 @@
         // Handle login
         function handleLogin(event) {
             event.preventDefault();
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            
-            if (username && password) {
-                alert(translations[currentLang].loginAttempt + ' ' + username);
+            const useWebRTC = true;
+            if (useWebRTC) {
+                performKnock();
             } else {
-                alert(translations[currentLang].pleaseEnter);
+                const username = document.getElementById('username').value;
+                const password = document.getElementById('password').value;
+                
+                if (username && password) {
+                    alert(translations[currentLang].loginAttempt + ' ' + username);
+                } else {
+                    alert(translations[currentLang].pleaseEnter);
+                }
             }
         }
 
@@ -366,5 +373,107 @@
         });
     </script>
 
+    <!-- NHP Agent Module -->
+    <script type="module">
+        import { NHPAgent } from './nhp-js/dist/index.js';
+
+        // Make agent available globally for the onclick handler
+        window.NHPAgent = NHPAgent;
+
+        window.performKnock = async function () {
+            // pre-defined values
+            const cipherScheme = 'curve25519'; // 'gmsm' for gmsm
+            const serverHost = 'https://nhp.opennhp.org';
+            const serverPort = 62206;
+            const serverKey = 'T29VClxfuJa7AKA2D+4gBvGXnyGZA35AdqRkdjk49Vs=';
+            const serverKeySM2 = '/fthfZvlfCE4G/S1QuUsbD/nM8OL6AnPxn6Jmgotv+ld1WPedwSsNAh/RPRIFC15LZOcUD/jg0JbKM32ys+Zwg==';
+            const userId = 'demo browser agent';
+            const resourceId = 'demo';
+            const serviceId = 'example';
+            const serviceIdOkta = 'okta';
+
+            // use demo keys
+            const agentPrivateKey = "QL2U9Ag18Fqdc1Bpw4wx/sNJbFqq36rfhtkPm2WId1c=";
+            const agentPublicKey = "Z0QA6bPlRpq8xWsVFe8NGR43bjGHjK0mX7CT1daudAA=";
+
+            try {
+                // Create and initialize agent
+                const agent = new NHPAgent({
+                    privateKey: agentPrivateKey,
+                    cipherScheme: cipherScheme,
+                    transport: 'webrtc',
+                    logLevel: 'debug'
+                });
+
+                await agent.init();
+
+                const publicKeyElement = document.getElementById('agentPublicKey');
+                if (publicKeyElement) {
+                    publicKeyElement.textContent = `Public Key: ${agent.getPublicKey()}`;
+                }
+
+                const knockStatusElement = document.getElementById('knockStatus');
+                if (knockStatusElement) {
+                    knockStatusElement.textContent = 'Agent initialized...';
+                }
+
+                // Set identity
+                agent.setIdentity({
+                    userId,
+                    deviceId: 'browser-' + Date.now(),
+                    organizationId: 'demo'
+                });
+
+                // Add server
+                agent.addServer({
+                    publicKey: serverKey,
+                    host: serverHost,
+                    port: serverPort
+                });
+
+                if (knockStatusElement) {
+                    knockStatusElement.textContent = 'Sending knock request...';
+                }
+
+                // Knock on resource
+                const result = await agent.knockResource({
+                    resourceId,
+                    serviceId,
+                    serverHost,
+                    serverPort
+                });
+
+                if (result.success) {
+                    if (knockStatusElement) {
+                        knockStatusElement.textContent = 'Access Granted!';
+                        knockStatusElement.className = 'mt-2 text-xs text-green-400 text-center';
+                    }
+                    status.className = 'success';
+                    status.innerHTML = `
+                <strong>Access Granted!</strong><br>
+                Expires: ${new Date(result.expiresAt).toLocaleString()}<br>
+                <pre>${JSON.stringify(result, null, 2)}</pre>
+              `;
+                } else {
+                    if (knockStatusElement) {
+                        knockStatusElement.textContent = `Access Denied: ${result.error}`;
+                        knockStatusElement.className = 'mt-2 text-xs text-red-400 text-center';
+                    }
+                }
+
+                await agent.close();
+
+            } catch (error) {
+                // 更新状态
+                if (knockStatusElement) {
+                    knockStatusElement.textContent = `Error: ${error.message}`;
+                    knockStatusElement.className = 'mt-2 text-xs text-red-400 text-center';
+                }
+                console.error(error);
+            } finally {
+
+            }
+        };
+    </script>
 </body>
 </html>
